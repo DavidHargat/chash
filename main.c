@@ -2,149 +2,219 @@
 #include <stdio.h>
 #include <string.h>
 
-// Node linked list structure.
-typedef struct hash_node{
-	void *data;
-	void *next;
-} hnode_t;
+typedef struct hnode {
+	struct hnode *next;
+	char         *data;
+	size_t         key;
+} hnode;
 
-// Table structure.
-typedef struct hash_table{
-	unsigned int size;
-	hnode_t **nodes;
-} htable_t;
+typedef struct htable {
+	size_t    size;
+	hnode  **nodes;
+} htable;
 
-// Allocate memory for node (table entry).
-hnode_t *create_node(){
-	hnode_t *nod;
-	nod = malloc(sizeof(hnode_t));
-	nod->data = NULL;
-	nod->next = NULL;
-	return nod;
+hnode *create_node(){
+	hnode *node;
+
+	node = malloc(sizeof(hnode));
+
+	node->key  = 0;
+	node->next = NULL;
+	node->data = NULL;
+
+	return node;
 }
 
-// Allocate memory for table.
-htable_t *create_table(unsigned int size){
-	htable_t *tab;
+htable *create_table(size_t size){
+	htable *table;
 	int i;
 	
-	tab = malloc(sizeof(htable_t));
-	tab->size = size;
-	tab->nodes = malloc(sizeof(hnode_t *)*size);
+	table = malloc(sizeof(htable));
 	
-	// Populate table with root nodes.
-	for(i=0; i<size; i++){
-		tab->nodes[i] = create_node();
-	}
-	
-	return tab;
+	table->size  = size;
+	table->nodes = malloc(sizeof(hnode *) * size);
+
+	// Allocate root nodes.
+	for(i=0; i<size; i++)
+		table->nodes[i] = create_node();
+
+	return table;
 }
 
-void free_node(hnode_t *node){
-	if(node->data!=NULL) free(node->data);
-	if(node->next!=NULL) free_node(node->next);
+void free_node(hnode *node){
+	if(node->data != NULL) free(node->data);
+	if(node->next != NULL) free_node(node->next);	
 	free(node);
 }
 
-void free_table(htable_t *table){
+void free_table(htable *table){
 	int i;
-		
-	// Free every node.
-	for(i=0; i<table->size; i++){
+
+	for(i=0; i<table->size; i++)
 		free_node(table->nodes[i]);
-	}
-	free(table->nodes);
+
+	free(table->nodes);	
 	free(table);
 }
 
-// Generate key from arbitrary data.
-//   return `key` on success.
-//   return -1 on failure.
-int hash_key(htable_t *table, void *src, size_t size){
-	unsigned int key, i;
-	
-	key = 0;
-	for(i=0; i<size; i++){
-		key += ((char *)src)[i];
+size_t hash_index(htable *table, size_t key){
+	return (key % table->size);
+}
+
+// Generate a key
+size_t hash_key(char *src, size_t length){
+	size_t i, key, tmp, c;
+
+	i   = 0;
+	key = 1;
+	tmp = src[0] * (length<<1);
+
+	for(; i<length; i++ ){
+		c = src[i];
+		
+		tmp += c ^ tmp;
+		tmp += tmp + (c << 1);
+		tmp += (c << 3) * tmp;
+		tmp += (c << 11) + (tmp<<3);
+		tmp += c;
+		
+		key += tmp;
 	}
 
-	key = (key % table->size);
+	key += key >> 11;
+	key ^= tmp << 2;
+	key += key << 25;
+	key += key >> 1;
+	key ^= tmp << 9;
+	key += key >> 5;	
 
 	return key;
 }
 
-// Hash arbitrary data.l
-//   return  1 on success.
-//   return -1 on failure.
-char hash_store(htable_t *tab, void *key_src, size_t key_size, void *data_src, size_t data_size){
-	int key, i;
-	hnode_t *nod, *find;
-	
-	// Generate key.
-	key = hash_key(tab, key_src, key_size);
+// Find the next available parent in the linked list.
+hnode *hash_find(hnode **nodes, size_t key, size_t index){
+	hnode  *temp, *parent;
 
-	// Create a hash node.
-	nod = create_node();
-	nod->data = malloc(data_size);
+	temp    = nodes[index];
+	parent  = temp;
 
-	// copy the data to the node
-	memcpy(nod->data, data_src, data_size);
-
-	// Free the old node.
-	free_node(tab->nodes[key]);
-	
-	// search 'bucket' table[key] for empty slot
-	tab->nodes[key] = nod;
-	
-	/*
-	i=0;
-	while(find->next != NULL){
-		find = find->next;
-		i++;
+	while(
+		temp->next != NULL &&
+		temp->key  != key
+	){
+		parent = temp;
+		temp   = temp->next;
 	}
-	find->next = nod;
-	*/
 
-	// success
-	return 1;
+	return parent;
 }
 
-void *hash_get(htable_t *tab, void *key_src, size_t key_size){
-	int key = hash_key(tab, key_src, key_size);
-	// TEMP: return root node.
-	return tab->nodes[key]->data;
-}
+char hash_set( 
+	htable *table, 
+	char *key_src,  size_t key_length, 
+	char *data_src, size_t data_length ){
 
-//  Wrapper for hashing strings.
-char set(htable_t *tab, char *key, char *data){
-	return hash_store(tab, key, strlen(key)+1, data, strlen(data)+1);
-}
+	size_t key, index;
+	hnode *parent, *node;
 
-// Wrapper for getting string keys.
-char *get(htable_t *tab, char *key){
-	return (char *) hash_get(tab, key, strlen(key)+1);
-}
+	// generate key, generate index, find node.
+	key    = hash_key(key_src, key_length);
+	index  = hash_index(table, key);
+	parent = hash_find(table->nodes, key, index);
 
-int main(char argc, char *argv[]){
-	htable_t *tab;
-	char *result;
-
-	// Create a hash_table
-	tab = create_table(32);	
-
-	// Copy strings into the table
-	set(tab, "a", "cat");    // tab["a"] = "cat"
-	set(tab, "b", "dog");    // tab["b"] = "dog"
-	set(tab, "c", "mouse");  // tab["c"] = "mouse"
-
-	// Get them back out with associated keys.
-	printf("result = %s\n", get(tab, "a")); // tab["a"] returns "cat"
-	printf("result = %s\n", get(tab, "b")); // tab["b"] returns "dog"
-	printf("result = %s\n", get(tab, "c")); // tab["c"] returns "mouse"
-
-	// Free memory
-	free_table(tab);
+	// create new node.
+	node = create_node();
+	node->key  = key;
+	node->data = malloc(data_length);
+	memcpy(node->data, data_src, data_length);
 	
-	return 0;
+	// insert root
+	if(parent->next == NULL){
+		parent->next = node;
+		return 1;
+	}
+	
+	// collision / replace
+	if(parent->next->key == key){
+		free_node(parent->next);
+		parent->next = node;
+		return 1;
+	}
+	
+	// insert next
+	if(parent->next->next == NULL){
+		parent->next->next = node;
+		return 1;
+	}
+	
+	printf("Set Error: %s, %s\n", key_src, data_src);
+	return -1;
 }
+
+char *hash_get(htable *table, char *key_src, size_t key_length){
+	size_t key, index;
+	hnode *parent;
+
+	key    = hash_key(key_src, key_length);
+	index  = hash_index(table, key);
+	parent = table->nodes[index];
+
+	while(
+		parent->next != NULL &&
+		parent->key  != key
+	){
+		parent = parent->next;
+	}
+
+	if( parent->key == key )
+		return parent->data;
+	else
+		return NULL;
+	
+} 
+
+char set(htable *table, char *key, char *data){
+	return hash_set(table, key, strlen(key)+1, data, strlen(data)+1);
+}
+
+char *get(htable *table, char *key){
+	return hash_get(table, key, strlen(key)+1);
+}
+
+int main(char argc, char **argv){
+	htable *table;
+
+	table = create_table(32);
+	
+	set(table, "a", "aaa");
+	set(table, "b", "bbb");
+	set(table, "c", "ccc");
+	set(table, "d", "ddd");
+	set(table, "e", "e");
+	set(table, "f", "f");
+	set(table, "g", "g");
+	set(table, "h", "h");
+	set(table, "i", "i");
+	set(table, "j", "j");
+	set(table, "k", "k");
+	set(table, "l", "l");
+	set(table, "i", "XXX");
+
+	printf("[%s] = %s\n", "a", get(table, "a"));
+	printf("[%s] = %s\n", "b", get(table, "b"));
+	printf("[%s] = %s\n", "c", get(table, "c"));
+	printf("[%s] = %s\n", "d", get(table, "d"));
+	printf("[%s] = %s\n", "e", get(table, "e"));
+	printf("[%s] = %s\n", "f", get(table, "f"));
+	printf("[%s] = %s\n", "g", get(table, "g"));
+	printf("[%s] = %s\n", "h", get(table, "h"));
+	printf("[%s] = %s\n", "i", get(table, "i"));
+	printf("[%s] = %s\n", "j", get(table, "j"));
+	printf("[%s] = %s\n", "k", get(table, "k"));
+	printf("[%s] = %s\n", "l", get(table, "l"));
+
+	free_table(table);
+
+}
+
 
