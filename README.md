@@ -45,3 +45,4 @@ Free a table (also `free()`s all data/nodes copied into it).
 
 `free_table(table)`
 
+
